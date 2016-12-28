@@ -1,55 +1,31 @@
 import re
 import itertools
+import collections
 
 file = open('Day 11 input.txt', 'r')
 inp = file.read()
 
 
-class Item(object):
-    def __init__(self):
-        self.generator = False
-        self.metal = ''
+class Metal(object):
+    def __init__(self, generator_floor=1, microchip_floor=1):
+        self.generator_floor = generator_floor
+        self.microchip_floor = microchip_floor
 
-
-class Floor(object):
-    def __init__(self):
-        self.generators = set()
-        self.microchips = set()
-
-    #check floor doesn't fry any chips
-    def valid(self):
-        #check chip paired OR ensure no generators
-        return all(m in self.generators or not self.generators for m in self.microchips)
-
-    def items(self):
-        ret = []
-        for g in self.generators:
-            i = Item()
-            i.generator = True
-            i.metal = g
-            ret.append(i)
-        for m in self.microchips:
-            i = Item()
-            i.generator = False
-            i.metal = m
-            ret.append(i)
-        return ret
+    def protected(self):
+        return self.generator_floor == self.microchip_floor
 
     def copy(self):
-        fc = Floor()
-        fc.generators = self.generators.copy()
-        fc.microchips = self.microchips.copy()
-        return fc
+        m = Metal()
+        m.generator_floor = self.generator_floor
+        m.microchip_floor = self.microchip_floor
+        return m
 
-    def empty(self):
-        if self.generators or self.microchips:
-            return False
-        return True
 
 class State(object):
-    def __init__(self):
-        self.floors = {}
+    def __init__(self, floors):
+        self.metals = collections.defaultdict(Metal)
         self.elevator = 1
+        self.floors = floors
 
     def __hash__(self):
         return hash(self.string())
@@ -59,29 +35,35 @@ class State(object):
 
     #boolean whether valid state
     def valid(self):
-        #check all floors valid
-        return all(f.valid() for f in self.floors.values())
+        #flag which floors have generators
+        gen = {x:False for x in range(1, self.floors + 1)}
+        for m in self.metals.values():
+            gen[m.generator_floor] = True
+        return all(m.protected() or not gen[m.microchip_floor] for m in self.metals.values())
 
-    def move(self, item, destination):
-        if item.generator:
-            self.floors[self.elevator].generators.remove(item.metal)
-            self.floors[destination].generators.add(item.metal)
-        else:
-            self.floors[self.elevator].microchips.remove(item.metal)
-            self.floors[destination].microchips.add(item.metal)
+    #boolean whether valid state
+    def complete(self):
+        return all(v.generator_floor == self.floors and v.microchip_floor == self.floors for v in self.metals.values())
 
     def copy(self):
-        sc = State()
+        sc = State(self.floors)
         sc.elevator = self.elevator
-        for k, f in self.floors.items():
-            sc.floors[k] = f.copy()
+        for k, m in self.metals.items():
+            sc.metals[k] = m.copy()
         return sc
+
+    def move(self, metal, generator=True, step=1):
+        if generator:
+            self.metals[metal].generator_floor += step
+        else:
+            self.metals[metal].microchip_floor += step
 
     #possible moves
     def poss_moves(self):
         ret = set()
-        movable = self.floors[self.elevator].items()
-        destinations = [d for d in self.floors.keys() if d in [self.elevator + 1, self.elevator - 1]]
+        movable = [(k, True) for k, v in self.metals.items() if v.generator_floor == self.elevator] + \
+                  [(k, False) for k, v in self.metals.items() if v.microchip_floor == self.elevator]
+        steps = [s for s in [-1, 1] if 1 <= self.elevator + s <= self.floors]
 
         #construct list combinations for 1 and 2 items
         combs = []
@@ -89,87 +71,77 @@ class State(object):
             els = [list(x) for x in itertools.combinations(movable, i)]
             combs.extend(els)
 
-        for d in destinations:
+        for s in steps:
             for p in combs:
                 c = self.copy()
                 for i in p:
-                    c.move(i, d)
-                c.elevator = d
+                    c.move(i[0], i[1], s)
+                c.elevator += s
                 if c.valid():
                     ret.add(c.copy())
 
         return ret
 
-    def complete(self):
-        return all(self.floors[x].empty() for x in range(1, 4))
-
-    #values of all elements
+    #identity of state
+    #name of metals is unimportant, simply the configuration
+    #count pairs (generator_floor, microchip_floor), list counts and elevator as identity
     def string(self):
         ret = 'E=' + str(self.elevator)
         encode = {key: 0 for key in itertools.product(range(1, 5), repeat=2)}
-        metals = {}
 
-        for k, f in self.floors.items():
-            for m in f.microchips:
-                metals[m] = k
+        for m in self.metals.values():
+            encode[(m.generator_floor, m.microchip_floor)] += 1
 
-        for k, f in self.floors.items():
-            for g in f.generators:
-                encode[(metals[g], k)] += 1
-
-        ret += ',I=' + ''.join([str(encode[k]) for k in sorted(encode.keys())])
+        ret += '|I=' + ','.join([str(encode[k]) for k in sorted(encode.keys())])
         return ret
 
 
 class Building(object):
     def __init__(self, start_state):
-        self.prev_state_strings = set()
+        self.start_state = start_state.copy()
 
-        self.last_states = set()
-        self.last_states.add(start_state.copy())
-        self.moves = 0
-        self.complete = False
+    def moves(self):
+        ret = 0
+        prev_state_strings = set()
+        last_states = set()
+        last_states.add(self.start_state)
 
-    def next_move(self):
-        self.moves += 1
-        self.prev_state_strings.update(s.string() for s in self.last_states)
-        new_states = set()
+        while 1:
+            ret += 1
 
-        for state in self.last_states:
-            for move in state.poss_moves():
-                if move.complete():
-                    self.complete = True
-                #check not already visited
-                if move.string() not in self.prev_state_strings:
-                    new_states.add(move)
+            prev_state_strings.update(s.string() for s in last_states)
+            new_states = set()
 
-        self.last_states = new_states
+            for state in last_states:
+                for move in state.poss_moves():
+                    #once complete, return number of moves
+                    if move.complete():
+                        return ret
+                    #ensure not already visited
+                    if move.string() not in prev_state_strings:
+                        new_states.add(move)
 
-    def process(self):
-        while not self.complete:
-            self.next_move()
+            last_states = new_states
 
 
-ss = State()
+ss = State(4)
 
+#initialize start state
 for i, line in enumerate(inp.split('\n'), 1):
-    ss.floors[i] = Floor()
     for s in line.split(' a '):
         m = re.match(r'(\w+).+', s)
         metal = m.group(1)[:2]
         if 'generator' in s:
-            ss.floors[i].generators.add(metal)
+            ss.metals[metal].generator_floor = i
         elif 'microchip' in s:
-            ss.floors[i].microchips.add(metal)
+            ss.metals[metal].microchip_floor = i
 
 b1 = Building(ss)
-b1.process()
 
-ss.floors[1].generators.update(['el', 'di'])
-ss.floors[1].microchips.update(['el', 'di'])
+ss.metals['el'] = Metal(1, 1)
+ss.metals['di'] = Metal(1, 1)
 
 b2 = Building(ss)
-b2.process()
 
-print('1st answer: ' + str(b1.moves))
-print('2nd answer: ' + str(b2.moves))
+print('1st answer: ' + str(b1.moves()))
+print('2nd answer: ' + str(b2.moves()))

@@ -40,7 +40,7 @@ class Computer(object):
 
         #spot multiplication
         if ''.join(x.cmd for x in self.commands[loc:loc+6]) == 'cpyincdecjnzdecjnz':
-            if all(x.args[0] in self.registers.keys() for x in self.commands[loc:loc+6]) and self.commands[loc + 3].args[1] == -2 and self.commands[loc + 5].args[1] == -5:
+            if all(x.args[0] in self.registers.keys() for x in self.commands[loc+1:loc+6]) and self.commands[loc + 3].args[1] == -2 and self.commands[loc + 5].args[1] == -5:
                 self.registers[self.commands[loc + 1].args[0]] += self.value(self.commands[loc].args[0]) * self.registers[self.commands[loc + 4].args[0]]
                 self.registers[self.commands[loc + 4].args[0]] = 0
                 self.registers[self.commands[loc + 2].args[0]] = 0
